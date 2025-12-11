@@ -5,3 +5,5 @@ pandas
 Pillow
 tensorflow
 joblib
+opencv-python-headless
+
