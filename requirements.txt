@@ -6,4 +6,5 @@ Pillow
 tensorflow
 joblib
 opencv-python-headless
+matplotlib
 
