@@ -1,10 +1,10 @@
 streamlit
-scikit-learn
 numpy
 pandas
 Pillow
-tensorflow
+scikit-learn
 joblib
 opencv-python-headless
 matplotlib
-
+seaborn
+tensorflow
