@@ -9,7 +9,7 @@ from PIL import Image, ImageOps, ImageEnhance, ImageFilter
 import streamlit as st
 
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder
+from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 from sklearn.svm import SVC
 import joblib
@@ -191,9 +191,7 @@ def build_bpnn(input_dim, num_classes):
     """Backpropagation Neural Network (MLP) berbasis vektor fitur."""
     model = Sequential([
         Dense(64, activation="relu", input_shape=(input_dim,)),
-        Dropout(0.3),
         Dense(32, activation="relu"),
-        Dropout(0.3),
         Dense(num_classes, activation="softmax"),
     ])
     model.compile(
@@ -202,7 +200,6 @@ def build_bpnn(input_dim, num_classes):
         metrics=["accuracy"]
     )
     return model
-
 
 def build_lstm(input_shape, num_classes):
     """
@@ -276,6 +273,10 @@ def prepare_dataset(data_dir, aug_per_image=AUG_PER_IMAGE):
 
     X = np.array(fitur_list)        # (N, F)
     labels = np.array(labels)
+    # --- Scaling fitur (sangat penting untuk BPNN & SVM) ---
+    scaler = StandardScaler()
+    X = scaler.fit_transform(X)
+
 
     # LSTM: (N, timesteps, features_per_step) = (N, F, 1)
     X_seq = X.reshape(len(X), X.shape[1], 1)
@@ -305,13 +306,15 @@ def prepare_dataset(data_dir, aug_per_image=AUG_PER_IMAGE):
         "label_encoder": le,
         "class_names": list(le.classes_),
         "n_features": X.shape[1],
+        "scaler": scaler,
     }
 
-def save_models(svm_model, bpnn_model, lstm_model, label_encoder):
+def save_models(svm_model, bpnn_model, lstm_model, label_encoder, scaler):
     joblib.dump(svm_model, os.path.join(MODEL_DIR, "svm_model.pkl"))
     bpnn_model.save(os.path.join(MODEL_DIR, "bpnn_model.h5"))
     lstm_model.save(os.path.join(MODEL_DIR, "lstm_model.h5"))
     joblib.dump(label_encoder, os.path.join(MODEL_DIR, "label_encoder.pkl"))
+    joblib.dump(scaler, os.path.join(MODEL_DIR, "scaler.pkl"))
 
 def load_models_if_exist():
     paths = {
@@ -319,15 +322,17 @@ def load_models_if_exist():
         "bpnn": os.path.join(MODEL_DIR, "bpnn_model.h5"),
         "lstm": os.path.join(MODEL_DIR, "lstm_model.h5"),
         "le": os.path.join(MODEL_DIR, "label_encoder.pkl"),
+        "scaler": os.path.join(MODEL_DIR, "scaler.pkl"),
     }
     if not all(os.path.exists(p) for p in paths.values()):
-        return None, None, None, None
+        return None, None, None, None, None
 
     svm_model = joblib.load(paths["svm"])
     bpnn_model = load_model(paths["bpnn"])
     lstm_model = load_model(paths["lstm"])
     label_encoder = joblib.load(paths["le"])
-    return svm_model, bpnn_model, lstm_model, label_encoder
+    scaler = joblib.load(paths["scaler"])
+    return svm_model, bpnn_model, lstm_model, label_encoder, scaler
 
 def preprocess_uploaded_image(uploaded_file):
     """
@@ -340,9 +345,8 @@ def preprocess_uploaded_image(uploaded_file):
         pil_rgb, with_rotation=False
     )
 
-    X = fitur.reshape(1, -1)
-    X_seq = fitur.reshape(1, fitur.shape[0], 1)
-    return pil_rgb_proc, img_gray_proc, X, X_seq
+    X_raw = fitur.reshape(1, -1)
+    return pil_rgb_proc, img_gray_proc, X_raw
 
 # ==================== KONFIGURASI STREAMLIT ====================
 
@@ -478,7 +482,13 @@ elif menu == "Training (Upload banyak gambar)":
         )
         st.write(f"✅ Akurasi LSTM (test): **{acc_ls*100:.2f}%**")
 
-        save_models(svm_model, bpnn_model, lstm_model, data["label_encoder"])
+        save_models(
+            svm_model,
+            bpnn_model,
+            lstm_model,
+            data["label_encoder"],
+            data["scaler"],
+        )
         st.success(
             "Semua model & label encoder berhasil disimpan di folder 'models/'."
         )
@@ -490,7 +500,7 @@ elif menu == "Training (Upload banyak gambar)":
 elif menu == "Validasi Model":
     st.title("📊 Validasi / Evaluasi Model")
 
-    svm_model, bpnn_model, lstm_model, label_encoder = load_models_if_exist()
+    svm_model, bpnn_model, lstm_model, label_encoder, scaler = load_models_if_exist()
     if svm_model is None:
         st.warning("Model belum ditemukan. Silakan lakukan training terlebih dahulu.")
     else:
@@ -609,7 +619,7 @@ elif menu == "Testing (Upload 1 gambar)":
     Tahap ini mewakili alur **\"Upload 1 gambar → Preprocessing dan Ekstraksi Fitur → Prediksi 3 model\"** pada flowchart.
     """)
 
-    svm_model, bpnn_model, lstm_model, label_encoder = load_models_if_exist()
+    svm_model, bpnn_model, lstm_model, label_encoder, scaler = load_models_if_exist()
     if svm_model is None:
         st.warning("Model belum ditemukan. Silakan lakukan training terlebih dahulu.")
     else:
@@ -619,9 +629,13 @@ elif menu == "Testing (Upload 1 gambar)":
         )
 
         if uploaded_file is not None:
-            pil_rgb_proc, img_gray_proc, X, X_seq = preprocess_uploaded_image(
+            pil_rgb_proc, img_gray_proc, X_raw = preprocess_uploaded_image(
                 uploaded_file
             )
+
+            # gunakan scaler yang sama dengan saat training
+            X = scaler.transform(X_raw)
+            X_seq = X.reshape(1, X.shape[1], 1)
 
             col1, col2 = st.columns(2)
             with col1:
